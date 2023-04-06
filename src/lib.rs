@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use thiserror::Error;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::sync::broadcast::Sender;
 
 /// The error type for [`Cached`].
 ///
