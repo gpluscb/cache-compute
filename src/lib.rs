@@ -105,6 +105,28 @@ impl<T, E> CachedInner<T, E> {
             inflight: Weak::new(),
         }
     }
+
+    fn invalidate(&mut self) -> Option<T> {
+        self.cached.take()
+    }
+
+    fn is_inflight(&self) -> bool {
+        self.inflight.upgrade().is_some()
+    }
+
+    fn inflight_waiting_cout(&self) -> usize {
+        self.inflight
+            .upgrade()
+            // Add one for the sender task
+            .map_or(0, |tx| tx.receiver_count() + 1)
+    }
+}
+
+impl<T: Clone, E> CachedInner<T, E> {
+    #[must_use]
+    pub fn get(&self) -> Option<T> {
+        self.cached.as_ref().cloned()
+    }
 }
 
 impl<T, E> Cached<T, E> {
@@ -127,27 +149,21 @@ impl<T, E> Cached<T, E> {
     /// Invalidates the cache immediately, returning its value without cloning if present.
     #[allow(clippy::must_use_candidate, clippy::missing_panics_doc)]
     pub fn invalidate(&self) -> Option<T> {
-        self.inner.lock().unwrap().cached.take()
+        self.inner.lock().unwrap().invalidate()
     }
 
     /// Returns `true` iff there is an inflight computation happening.
     #[must_use]
     #[allow(clippy::missing_panics_doc)]
     pub fn is_inflight(&self) -> bool {
-        self.inner.lock().unwrap().inflight.upgrade().is_some()
+        self.inner.lock().unwrap().is_inflight()
     }
 
     /// Returns the amount of instances waiting on an inflight computation, including the instance that started the computation.
     #[must_use]
     #[allow(clippy::missing_panics_doc)]
     pub fn inflight_waiting_cout(&self) -> usize {
-        self.inner
-            .lock()
-            .unwrap()
-            .inflight
-            .upgrade()
-            // Add one for the sender task
-            .map_or(0, |tx| tx.receiver_count() + 1)
+        self.inner.lock().unwrap().inflight_waiting_cout()
     }
 }
 
@@ -156,7 +172,7 @@ impl<T: Clone, E> Cached<T, E> {
     #[must_use]
     #[allow(clippy::missing_panics_doc)]
     pub fn get(&self) -> Option<T> {
-        self.inner.lock().unwrap().cached.as_ref().cloned()
+        self.inner.lock().unwrap().get()
     }
 }
 
