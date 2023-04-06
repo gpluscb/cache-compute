@@ -166,50 +166,6 @@ where
     T: Clone,
     E: Clone,
 {
-    /// Like [`Cached::get_or_subscribe`], but keeps the lock the function used iff nothing is cached and no inflight computation is present.
-    /// This allows [`Cached::get_or_compute`] to re-use that same lock to set up the computation without creating a race condition.
-    async fn get_or_subscribe_keep_lock(&self) -> GetOrSubscribeResult<'_, T, E> {
-        // We have to do this somewhat ugly block setup because we can't just drop(inner) in the if-let
-        // Otherwise the Future this returns wouldn't be sync
-
-        // Details:
-        // https://github.com/rust-lang/rust/issues/69663
-        // https://users.rust-lang.org/t/manual-drop-of-send-value-doesnt-make-async-block-sendable/66968
-        // We may not just use await normally in the if-let, because that will prevent the Future being Send.
-        // The lock on inner must be dropped by **end of its scope**, and not drop()!
-        // Otherwise the compiler captures it and its trait bounds too eagerly in the Future, and MutexGuard is !Send.
-        // Note: Send bound tested by tests::test_cached - the test will not compile if this Future is !Send.
-
-        let mut receiver = {
-            // Only sync code in this block
-            let inner = self.inner.lock().unwrap();
-
-            // Return cached if available
-            if let Some(value) = &inner.cached {
-                return GetOrSubscribeResult::Success(Ok(value.clone()));
-            }
-
-            if let Some(inflight) = inner.inflight.upgrade() {
-                inflight.subscribe()
-            } else {
-                return GetOrSubscribeResult::FailureKeepLock(inner);
-            }
-        };
-
-        GetOrSubscribeResult::Success(match receiver.recv().await {
-            Err(why) => Err(Error::from(why)),
-            Ok(res) => res.map_err(Error::Computation),
-        })
-    }
-
-    // TODO: Docs
-    pub async fn get_or_subscribe(&self) -> Option<Result<T, Error<E>>> {
-        match self.get_or_subscribe_keep_lock().await {
-            GetOrSubscribeResult::Success(res) => Some(res),
-            GetOrSubscribeResult::FailureKeepLock(_) => None,
-        }
-    }
-
     /// This function will
     /// - Execute `computation` and the [`Future`] it returns if there is no cached value and no inflight computation is happening
     /// - Not do anything with `computation` and return the cached value immediately if there is a cached value available
@@ -271,6 +227,51 @@ where
         tx.send(res.clone()).ok();
 
         res.map_err(Error::Computation)
+    }
+
+    // TODO: Docs, tests
+    pub async fn get_or_subscribe(&self) -> Option<Result<T, Error<E>>> {
+        if let GetOrSubscribeResult::Success(res) = self.get_or_subscribe_keep_lock().await {
+            Some(res)
+        } else {
+            None
+        }
+    }
+
+    /// Like [`Cached::get_or_subscribe`], but keeps and returns the lock the function used iff nothing is cached and no inflight computation is present.
+    /// This allows [`Cached::get_or_compute`] to re-use that same lock to set up the computation without creating a race condition.
+    async fn get_or_subscribe_keep_lock(&self) -> GetOrSubscribeResult<'_, T, E> {
+        // We have to do this somewhat ugly block setup because we can't just drop(inner) in the if-let
+        // Otherwise the Future this returns wouldn't be sync
+
+        // Details:
+        // https://github.com/rust-lang/rust/issues/69663
+        // https://users.rust-lang.org/t/manual-drop-of-send-value-doesnt-make-async-block-sendable/66968
+        // We may not just use await normally in the if-let, because that will prevent the Future being Send.
+        // The lock on inner must be dropped by **end of its scope**, and not drop()!
+        // Otherwise the compiler captures it and its trait bounds too eagerly in the Future, and MutexGuard is !Send.
+        // Note: Send bound tested by tests::test_cached - the test will not compile if this Future is !Send.
+
+        let mut receiver = {
+            // Only sync code in this block
+            let inner = self.inner.lock().unwrap();
+
+            // Return cached if available
+            if let Some(value) = &inner.cached {
+                return GetOrSubscribeResult::Success(Ok(value.clone()));
+            }
+
+            if let Some(inflight) = inner.inflight.upgrade() {
+                inflight.subscribe()
+            } else {
+                return GetOrSubscribeResult::FailureKeepLock(inner);
+            }
+        };
+
+        GetOrSubscribeResult::Success(match receiver.recv().await {
+            Err(why) => Err(Error::from(why)),
+            Ok(res) => res.map_err(Error::Computation),
+        })
     }
 }
 
