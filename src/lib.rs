@@ -70,7 +70,7 @@ pub enum Error<E> {
 /// The cached value is stored on the stack, so you may want to consider using a [`Box`] for large `T`.
 ///
 /// [`Box`]: std::boxed::Box
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Cached<T, E> {
     inner: Arc<Mutex<CachedInner<T, E>>>,
 }
@@ -83,16 +83,28 @@ impl<T, E> Clone for Cached<T, E> {
     }
 }
 
-impl<T, E> Default for Cached<T, E> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct CachedInner<T, E> {
     cached: Option<T>,
     inflight: Weak<Sender<Result<T, E>>>,
+}
+
+impl<T, E> CachedInner<T, E> {
+    #[must_use]
+    fn new() -> Self {
+        CachedInner {
+            cached: None,
+            inflight: Weak::new(),
+        }
+    }
+
+    #[must_use]
+    fn new_with_value(value: T) -> Self {
+        CachedInner {
+            cached: Some(value),
+            inflight: Weak::new(),
+        }
+    }
 }
 
 impl<T, E> Cached<T, E> {
@@ -100,10 +112,7 @@ impl<T, E> Cached<T, E> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(CachedInner {
-                cached: None,
-                inflight: Weak::new(),
-            })),
+            inner: Arc::new(Mutex::new(CachedInner::new())),
         }
     }
 
@@ -111,10 +120,7 @@ impl<T, E> Cached<T, E> {
     #[must_use]
     pub fn new_with_value(value: T) -> Self {
         Cached {
-            inner: Arc::new(Mutex::new(CachedInner {
-                cached: Some(value),
-                inflight: Weak::new(),
-            })),
+            inner: Arc::new(Mutex::new(CachedInner::new_with_value(value))),
         }
     }
 
