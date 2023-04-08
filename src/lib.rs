@@ -25,12 +25,13 @@
 
 use std::fmt::Debug;
 use std::future::Future;
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Weak};
 
+use parking_lot::{Mutex, MutexGuard};
 use thiserror::Error;
-use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::Sender;
+use tokio::sync::broadcast::{self, Receiver};
 
 /// The error type for [`Cached`].
 ///
@@ -124,8 +125,12 @@ impl<T, E> CachedInner<T, E> {
 
 impl<T: Clone, E> CachedInner<T, E> {
     #[must_use]
-    pub fn get(&self) -> Option<T> {
+    fn get(&self) -> Option<T> {
         self.cached.as_ref().cloned()
+    }
+
+    fn get_subscriber(&self) -> Option<Receiver<Result<T, E>>> {
+        self.inflight.upgrade().map(|tx| tx.subscribe())
     }
 }
 
@@ -147,36 +152,33 @@ impl<T, E> Cached<T, E> {
     }
 
     /// Invalidates the cache immediately, returning its value without cloning if present.
-    #[allow(clippy::must_use_candidate, clippy::missing_panics_doc)]
+    #[allow(clippy::must_use_candidate)]
     pub fn invalidate(&self) -> Option<T> {
-        self.inner.lock().unwrap().invalidate()
+        self.inner.lock().invalidate()
     }
 
     /// Returns `true` iff there is an inflight computation happening.
     #[must_use]
-    #[allow(clippy::missing_panics_doc)]
     pub fn is_inflight(&self) -> bool {
-        self.inner.lock().unwrap().is_inflight()
+        self.inner.lock().is_inflight()
     }
 
     /// Returns the amount of instances waiting on an inflight computation, including the instance that started the computation.
     #[must_use]
-    #[allow(clippy::missing_panics_doc)]
     pub fn inflight_waiting_cout(&self) -> usize {
-        self.inner.lock().unwrap().inflight_waiting_cout()
+        self.inner.lock().inflight_waiting_cout()
     }
 }
 
 impl<T: Clone, E> Cached<T, E> {
     /// Returns the value of the cache immediately if present, cloning the value.
     #[must_use]
-    #[allow(clippy::missing_panics_doc)]
     pub fn get(&self) -> Option<T> {
-        self.inner.lock().unwrap().get()
+        self.inner.lock().get()
     }
 }
 
-// TODO: Force computation without race conditions (impl some stuff on inner to keep lock?)
+// TODO: Cancel, force recomputation without race conditions (impl some stuff on inner to keep lock?)
 
 enum GetOrSubscribeResult<'a, T, E> {
     Success(Result<T, Error<E>>),
@@ -208,6 +210,7 @@ where
     /// # Panics
     ///
     /// This function panics if `computation` panics, or if the [`Future`] returned by `computation` panics.
+    #[allow(clippy::await_holding_lock)] // Clippy you're literally wrong we're moving it before the await
     pub async fn get_or_compute<Fut>(
         &self,
         computation: impl FnOnce() -> Fut,
@@ -215,40 +218,13 @@ where
     where
         Fut: Future<Output = Result<T, E>>,
     {
-        let tx = {
-            // Only sync code in this block after inner is acquired
-            let mut inner = match self.get_or_subscribe_keep_lock().await {
-                GetOrSubscribeResult::Success(res) => return res,
-                GetOrSubscribeResult::FailureKeepLock(lock) => lock,
-            };
-
-            // Neither cached nor inflight, so compute
-            let (tx, _rx) = broadcast::channel(1);
-            let tx = Arc::new(tx);
-
-            // In case we panic or get aborted, have way for receivers to notice (via the Weak getting dropped)
-            inner.inflight = Arc::downgrade(&tx);
-
-            tx
+        let inner = match self.get_or_subscribe_keep_lock().await {
+            GetOrSubscribeResult::Success(res) => return res,
+            GetOrSubscribeResult::FailureKeepLock(lock) => lock,
         };
 
-        // We are the sender, run the computation
-        let res = computation().await;
-
-        {
-            // Only sync code in this block
-            let mut inner = self.inner.lock().unwrap();
-            inner.inflight = Weak::new();
-
-            if let Ok(value) = &res {
-                inner.cached.replace(value.clone());
-            };
-        }
-
-        // There might not be receivers in valid circumstances, which would return an error, so we can ignore the result
-        tx.send(res.clone()).ok();
-
-        res.map_err(Error::Computation)
+        // Neither cached nor inflight so this is safe to unwrap
+        self.compute_with_lock(computation, inner).await.unwrap()
     }
 
     // TODO: Docs, tests
@@ -260,40 +236,107 @@ where
         }
     }
 
+    // TODO: Docs, tests
+    #[allow(clippy::await_holding_lock)] // Clippy you're literally wrong we're dropping/moving it before the await
+    pub async fn subscribe_or_recompute<Fut>(
+        &self,
+        computation: impl FnOnce() -> Fut,
+    ) -> (Option<T>, Result<T, Error<E>>)
+    where
+        Fut: Future<Output = Result<T, E>>,
+    {
+        let mut inner = self.inner.lock();
+
+        if let Some(mut receiver) = inner.get_subscriber() {
+            drop(inner);
+
+            // Lock is dropped so async is legal again :)
+            (
+                None,
+                match receiver.recv().await {
+                    Err(why) => Err(Error::from(why)),
+                    Ok(res) => res.map_err(Error::Computation),
+                },
+            )
+        } else {
+            let prev = inner.invalidate();
+
+            // Neither cached nor inflight, so unwrap is fine
+            let result = self.compute_with_lock(computation, inner).await.unwrap();
+
+            (prev, result)
+        }
+    }
+
     /// Like [`Cached::get_or_subscribe`], but keeps and returns the lock the function used iff nothing is cached and no inflight computation is present.
     /// This allows [`Cached::get_or_compute`] to re-use that same lock to set up the computation without creating a race condition.
+    #[allow(clippy::await_holding_lock)] // Clippy you're literally wrong we're dropping it before the await
     async fn get_or_subscribe_keep_lock(&self) -> GetOrSubscribeResult<'_, T, E> {
-        // We have to do this somewhat ugly block setup because we can't just drop(inner) in the if-let
-        // Otherwise the Future this returns wouldn't be sync
+        // Only sync code in this block
+        let inner = self.inner.lock();
 
-        // Details:
-        // https://github.com/rust-lang/rust/issues/69663
-        // https://users.rust-lang.org/t/manual-drop-of-send-value-doesnt-make-async-block-sendable/66968
-        // We may not just use await normally in the if-let, because that will prevent the Future being Send.
-        // The lock on inner must be dropped by **end of its scope**, and not drop()!
-        // Otherwise the compiler captures it and its trait bounds too eagerly in the Future, and MutexGuard is !Send.
-        // Note: Send bound tested by tests::test_cached - the test will not compile if this Future is !Send.
+        // Return cached if available
+        if let Some(value) = &inner.cached {
+            return GetOrSubscribeResult::Success(Ok(value.clone()));
+        }
 
-        let mut receiver = {
-            // Only sync code in this block
-            let inner = self.inner.lock().unwrap();
-
-            // Return cached if available
-            if let Some(value) = &inner.cached {
-                return GetOrSubscribeResult::Success(Ok(value.clone()));
-            }
-
-            if let Some(inflight) = inner.inflight.upgrade() {
-                inflight.subscribe()
-            } else {
-                return GetOrSubscribeResult::FailureKeepLock(inner);
-            }
+        let Some(mut receiver) = inner.get_subscriber() else {
+            return GetOrSubscribeResult::FailureKeepLock(inner);
         };
 
-        GetOrSubscribeResult::Success(match receiver.recv().await {
+        drop(inner);
+
+        let result = receiver.recv().await;
+
+        GetOrSubscribeResult::Success(match result {
             Err(why) => Err(Error::from(why)),
             Ok(res) => res.map_err(Error::Computation),
         })
+    }
+
+    /// Doesn't execute `computation` and returns [`None`] if a cached value is present or an inflight computation is already happening.
+    #[allow(clippy::await_holding_lock)] // Clippy you're literally wrong we're dropping it before the await
+    async fn compute_with_lock<'a, Fut>(
+        &'a self,
+        computation: impl FnOnce() -> Fut,
+        mut inner: MutexGuard<'a, CachedInner<T, E>>,
+    ) -> Option<Result<T, Error<E>>>
+    where
+        Fut: Future<Output = Result<T, E>>,
+    {
+        // Check that no value is cached and no computation is happening
+        if inner.get().is_some() || inner.is_inflight() {
+            return None;
+        }
+
+        // Neither cached nor inflight, so compute
+        // Underscore binding drops immediately, which is important for the receiver count
+        let (tx, _) = broadcast::channel(1);
+        let tx = Arc::new(tx);
+
+        // In case we panic or get aborted, have way for receivers to notice (via the Weak getting dropped)
+        inner.inflight = Arc::downgrade(&tx);
+
+        // Release lock so we can do async computation
+        drop(inner);
+
+        // Run the computation
+        let res = computation().await;
+
+        {
+            // Only sync code in this block
+            let mut inner = self.inner.lock();
+            inner.inflight = Weak::new();
+
+            if let Ok(value) = &res {
+                inner.cached.replace(value.clone());
+            };
+        }
+
+        // There might not be receivers in valid circumstances, which would return an error, so we can ignore the result
+        tx.send(res.clone()).ok();
+
+        Some(res.map_err(Error::Computation))
     }
 }
 
