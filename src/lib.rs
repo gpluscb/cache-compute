@@ -288,6 +288,25 @@ where
         }
     }
 
+    // TODO: Docs, tests
+    // TODO: Potentially return prev cached and whether we aborted?
+    #[allow(clippy::await_holding_lock)] // Clippy you're literally wrong we're moving it before the await
+    pub async fn force_recompute<Fut>(
+        &self,
+        computation: impl FnOnce() -> Fut,
+    ) -> Result<T, Error<E>>
+    where
+        Fut: Future<Output = Result<T, E>>,
+    {
+        let mut inner = self.inner.lock();
+
+        inner.abort();
+        inner.invalidate();
+
+        // Neither cached nor inflight, so safe to unwrap here
+        self.compute_with_lock(computation, inner).await.unwrap()
+    }
+
     /// Like [`Cached::get_or_subscribe`], but keeps and returns the lock the function used iff nothing is cached and no inflight computation is present.
     /// This allows [`Cached::get_or_compute`] to re-use that same lock to set up the computation without creating a race condition.
     #[allow(clippy::await_holding_lock)] // Clippy you're literally wrong we're dropping it before the await
