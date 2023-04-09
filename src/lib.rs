@@ -184,7 +184,7 @@ impl<T, E> Cached<T, E> {
         self.inner.lock().inflight_waiting_count()
     }
 
-    // TODO: Docs, tests
+    // TODO: Docs
     #[allow(clippy::must_use_candidate)]
     pub fn abort(&self) -> bool {
         self.inner.lock().abort()
