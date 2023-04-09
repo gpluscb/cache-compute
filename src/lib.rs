@@ -302,8 +302,6 @@ where
         inner.abort();
         inner.invalidate();
 
-        // FIXME: This is racey, abort *schedules* an abort, but we still have to go through rest of compute_with_lock until inner is in non-inflight state again...
-
         // Neither cached nor inflight, so safe to unwrap here
         self.compute_with_lock(computation, inner).await.unwrap()
     }
