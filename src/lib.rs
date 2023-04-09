@@ -288,22 +288,30 @@ where
     }
 
     // TODO: Docs
-    // TODO: Potentially return prev cached and whether we aborted?
+    // TODO: Own type for this Option<Option<T>> thing
     #[allow(clippy::await_holding_lock)] // Clippy you're literally wrong we're moving it before the await
     pub async fn force_recompute<Fut>(
         &self,
         computation: impl FnOnce() -> Fut,
-    ) -> Result<T, Error<E>>
+    ) -> (Option<Option<T>>, Result<T, Error<E>>)
     where
         Fut: Future<Output = Result<T, E>>,
     {
         let mut inner = self.inner.lock();
 
-        inner.abort();
-        inner.invalidate();
+        let aborted = inner.abort();
+        let prev = inner.invalidate();
 
-        // Neither cached nor inflight, so safe to unwrap here
-        self.compute_with_lock(computation, inner).await.unwrap()
+        // We aborted implies that there should be nothing in the cache
+        debug_assert!(!aborted || prev.is_none());
+
+        // If we aborted we don't include previous cached (it would be None anyway), otherwise we do
+        let prev_state = (!aborted).then_some(prev);
+
+        // Neither cached nor inflight at this point, so safe to unwrap here
+        let result = self.compute_with_lock(computation, inner).await.unwrap();
+
+        (prev_state, result)
     }
 
     /// Like [`Cached::get_or_subscribe`], but keeps and returns the lock the function used iff nothing is cached and no inflight computation is present.
@@ -717,27 +725,36 @@ mod test {
         // Test empty cache
         assert_eq!(
             cached.force_recompute(|| async { Err(()) }).await,
-            Err(Error::Computation(()))
+            (Some(None), Err(Error::Computation(()))),
         );
         assert_eq!(cached.get(), None);
-        assert_eq!(cached.force_recompute(|| async { Ok(0) }).await, Ok(0));
+        assert_eq!(
+            cached.force_recompute(|| async { Ok(0) }).await,
+            (Some(None), Ok(0))
+        );
         assert_eq!(cached.get(), Some(0));
 
         // Test cached
-        assert_eq!(cached.force_recompute(|| async { Ok(15) }).await, Ok(15));
+        assert_eq!(
+            cached.force_recompute(|| async { Ok(15) }).await,
+            (Some(Some(0)), Ok(15)),
+        );
         assert_eq!(cached.get(), Some(15));
         // Error should still invalidate cache
         // TODO: Is that actually desired?? Consider diff fn name like invalidate_and_etc?
         assert_eq!(
             cached.force_recompute(|| async { Err(()) }).await,
-            Err(Error::Computation(()))
+            (Some(Some(15)), Err(Error::Computation(()))),
         );
         assert_eq!(cached.get(), None);
 
         // Test inflight
         let (_notify, handle) = setup_inflight_request(Cached::clone(&cached), Ok(0)).await;
 
-        assert_eq!(cached.force_recompute(|| async { Ok(21) }).await, Ok(21));
+        assert_eq!(
+            cached.force_recompute(|| async { Ok(21) }).await,
+            (None, Ok(21))
+        );
         assert!(matches!(handle.await.unwrap(), Err(Error::Aborted(_))));
         assert_eq!(cached.get(), Some(21));
     }
