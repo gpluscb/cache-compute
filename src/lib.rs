@@ -40,10 +40,10 @@ use tokio::sync::broadcast::{self, Receiver};
 #[derive(Debug, PartialEq, Error, Clone)]
 pub enum Error<E> {
     /// Notifying the other waiters failed with a [`RecvError`].
-    /// Either the inflight computation panicked or the [`Future`] returned by get_or_compute was dropped/canceled.
+    /// Either the inflight computation panicked or the [`Future`] returned by `get_or_compute` was dropped/canceled.
     #[error("The computation for get_or_compute panicked or the Future returned by get_or_compute was dropped: {0}")]
     Broadcast(#[from] RecvError),
-    /// The inflight computation returned an Error value.
+    /// The inflight computation returned an error value.
     #[error("Inflight computation returned error value: {0}")]
     Computation(E),
     /// The inflight computation was aborted
