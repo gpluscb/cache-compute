@@ -701,6 +701,24 @@ mod test {
         assert_eq!(cached.get(), Some(12));
     }
 
+    #[tokio::test]
+    async fn test_abort() {
+        let cached = Cached::<_, ()>::new();
+
+        // Test no inflight
+        assert!(!cached.abort());
+
+        // Test inflight
+        let (_notify, handle) = setup_inflight_request(Cached::clone(&cached), Ok(0)).await;
+
+        assert!(cached.abort());
+
+        assert!(matches!(handle.await.unwrap(), Err(Error::Aborted(_))));
+        assert_eq!(cached.get(), None);
+        assert!(!cached.is_inflight());
+        assert_eq!(cached.inflight_waiting_count(), 0);
+    }
+
     /// After this function, `cached` will have an active inflight computation.
     /// The computation will finish with `result` once the `notify_waiters` is called on the returned [`Notify`].
     /// The computation can be joined with the returned `JoinHandle`.
