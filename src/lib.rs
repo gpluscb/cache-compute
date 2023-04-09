@@ -198,8 +198,6 @@ impl<T: Clone, E> Cached<T, E> {
     }
 }
 
-// TODO: Force recomputation without race conditions
-
 enum GetOrSubscribeResult<'a, T, E> {
     Success(Result<T, Error<E>>),
     FailureKeepLock(MutexGuard<'a, CachedInner<T, E>>),
