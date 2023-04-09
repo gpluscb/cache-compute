@@ -254,7 +254,7 @@ where
         }
     }
 
-    // TODO: Docs, tests
+    // TODO: Docs
     #[allow(clippy::await_holding_lock)] // Clippy you're literally wrong we're dropping/moving it before the await
     pub async fn subscribe_or_recompute<Fut>(
         &self,
@@ -646,6 +646,60 @@ mod test {
         assert_eq!(handle.await.unwrap(), Ok(30));
         assert_eq!(get_or_subscribe_handle.await.unwrap(), Some(Ok(30)));
         assert_eq!(cached.get(), Some(30));
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_or_recompute() {
+        let cached = Cached::<_, ()>::new();
+
+        // Test empty cache
+        assert_eq!(
+            cached.subscribe_or_recompute(|| async { Err(()) }).await,
+            (None, Err(Error::Computation(()))),
+        );
+        assert_eq!(cached.get(), None);
+
+        assert_eq!(
+            cached.subscribe_or_recompute(|| async { Ok(0) }).await,
+            (None, Ok(0)),
+        );
+        assert_eq!(cached.get(), Some(0));
+
+        // Test cached
+        assert_eq!(
+            cached.subscribe_or_recompute(|| async { Ok(30) }).await,
+            (Some(0), Ok(30)),
+        );
+        assert_eq!(cached.get(), Some(30));
+
+        // Error should still invalidate cache
+        // TODO: Is that actually desired?? Consider diff fn name like invalidate_and_etc?
+        assert_eq!(
+            cached.subscribe_or_recompute(|| async { Err(()) }).await,
+            (Some(30), Err(Error::Computation(()))),
+        );
+        assert_eq!(cached.get(), None);
+
+        // Test inflight
+        let (notify, handle) = setup_inflight_request(Cached::clone(&cached), Ok(12)).await;
+
+        let second_handle = {
+            let cached = Cached::clone(&cached);
+
+            tokio::spawn(async move {
+                cached
+                    .subscribe_or_recompute(|| async {
+                        panic!("Shouldn't execute, already inflight")
+                    })
+                    .await
+            })
+        };
+
+        notify.notify_waiters();
+
+        assert_eq!(handle.await.unwrap(), Ok(12));
+        assert_eq!(second_handle.await.unwrap(), (None, Ok(12)));
+        assert_eq!(cached.get(), Some(12));
     }
 
     /// After this function, `cached` will have an active inflight computation.
