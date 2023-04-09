@@ -34,6 +34,8 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::Sender;
 use tokio::sync::broadcast::{self, Receiver};
 
+// TODO: More sane struct/impl ordering
+
 /// The error type for [`Cached`].
 ///
 /// `E` specifies the error the computation may return.
