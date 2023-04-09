@@ -126,7 +126,6 @@ impl<T, E> CachedInner<T, E> {
             .map_or(0, |arc| arc.1.receiver_count() + 1)
     }
 
-    // TODO: Actually abort (futures::future::Abortable?)
     fn abort(&mut self) -> bool {
         if let Some(arc) = self.inflight.upgrade() {
             arc.0.abort();
