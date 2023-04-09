@@ -88,16 +88,19 @@ impl<T, E> Clone for Cached<T, E> {
     }
 }
 
-// TODO: Docs
+/// An enum representing the state of an instance of [`Cached`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CachedState<T> {
+    /// The cache is empty and there is no inflight computation happening.
     EmptyCache,
+    /// A cached value is present.
     ValueCached(T),
+    /// An inflight computation is currently happening.
     Inflight,
 }
 
 impl<T> CachedState<T> {
-    // TODO: Docs
+    /// Returns `true` iff there is an inflight computation happening.
     #[must_use]
     pub fn is_inflight(&self) -> bool {
         matches!(self, CachedState::Inflight)
@@ -105,7 +108,7 @@ impl<T> CachedState<T> {
 }
 
 impl<T: Clone> CachedState<T> {
-    // TODO: Docs
+    /// Returns the value in the cache immediately if present, cloning the value.
     #[must_use]
     pub fn get(&self) -> Option<T> {
         match self {
