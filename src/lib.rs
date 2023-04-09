@@ -97,6 +97,7 @@ pub enum CachedState<T> {
 }
 
 impl<T> CachedState<T> {
+    // TODO: Docs
     pub fn is_inflight(&self) -> bool {
         matches!(self, CachedState::Inflight)
     }
@@ -314,7 +315,6 @@ where
     }
 
     // TODO: Docs
-    // TODO: Own type for this Option<Option<T>> thing
     #[allow(clippy::await_holding_lock)] // Clippy you're literally wrong we're moving it before the await
     pub async fn force_recompute<Fut>(
         &self,
