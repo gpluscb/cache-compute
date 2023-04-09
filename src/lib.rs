@@ -217,7 +217,11 @@ impl<T, E> Cached<T, E> {
         self.inner.lock().inflight_waiting_count()
     }
 
-    // TODO: Docs
+    /// Aborts the current inflight computation.
+    /// Returns `true` iff there was an inflight computation to abort.
+    ///
+    /// After this function returns, the instance will *immediately* act like there is no inflight computation happening.
+    /// However, it might still take some time until the actual inflight computation finishes aborting.
     #[allow(clippy::must_use_candidate)]
     pub fn abort(&self) -> bool {
         self.inner.lock().abort()
@@ -338,9 +342,9 @@ where
         let mut inner = self.inner.lock();
 
         let aborted = inner.abort();
-        let prev = inner.invalidate();
+        let prev_cache = inner.invalidate();
 
-        let prev_state = match (aborted, prev) {
+        let prev_state = match (aborted, prev_cache) {
             (false, None) => CachedState::EmptyCache,
             (false, Some(val)) => CachedState::ValueCached(val),
             (true, None) => CachedState::Inflight,
