@@ -164,6 +164,11 @@ impl<T, E> CachedInner<T, E> {
             false
         }
     }
+
+    #[must_use]
+    fn is_value_cached(&self) -> bool {
+        self.cached.is_some()
+    }
 }
 
 impl<T: Clone, E> CachedInner<T, E> {
@@ -216,6 +221,12 @@ impl<T, E> Cached<T, E> {
     #[allow(clippy::must_use_candidate)]
     pub fn abort(&self) -> bool {
         self.inner.lock().abort()
+    }
+
+    /// Returns `true` iff a value is currently cached.
+    #[must_use]
+    pub fn is_value_cached(&self) -> bool {
+        self.inner.lock().is_value_cached()
     }
 }
 
@@ -379,7 +390,7 @@ where
         Fut: Future<Output = Result<T, E>>,
     {
         // Check that no value is cached and no computation is happening
-        if inner.get().is_some() || inner.is_inflight() {
+        if inner.is_value_cached() || inner.is_inflight() {
             return None;
         }
 
