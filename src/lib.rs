@@ -129,7 +129,7 @@ impl<T: Clone, E> CachedInner<T, E> {
         self.cached.as_ref().cloned()
     }
 
-    fn get_subscriber(&self) -> Option<Receiver<Result<T, E>>> {
+    fn get_receiver(&self) -> Option<Receiver<Result<T, E>>> {
         self.inflight.upgrade().map(|tx| tx.subscribe())
     }
 }
