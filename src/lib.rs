@@ -247,7 +247,7 @@ where
     {
         let mut inner = self.inner.lock();
 
-        if let Some(mut receiver) = inner.get_subscriber() {
+        if let Some(mut receiver) = inner.get_receiver() {
             drop(inner);
 
             // Lock is dropped so async is legal again :)
@@ -280,7 +280,7 @@ where
             return GetOrSubscribeResult::Success(Ok(value.clone()));
         }
 
-        let Some(mut receiver) = inner.get_subscriber() else {
+        let Some(mut receiver) = inner.get_receiver() else {
             return GetOrSubscribeResult::FailureKeepLock(inner);
         };
 
