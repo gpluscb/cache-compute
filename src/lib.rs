@@ -300,6 +300,8 @@ where
         inner.abort();
         inner.invalidate();
 
+        // FIXME: This is racey, abort *schedules* an abort, but we still have to go through rest of compute_with_lock until inner is in non-inflight state again...
+
         // Neither cached nor inflight, so safe to unwrap here
         self.compute_with_lock(computation, inner).await.unwrap()
     }
@@ -702,6 +704,38 @@ mod test {
     }
 
     #[tokio::test]
+    async fn test_force_recompute() {
+        let cached = Cached::<_, ()>::new();
+
+        // Test empty cache
+        assert_eq!(
+            cached.force_recompute(|| async { Err(()) }).await,
+            Err(Error::Computation(()))
+        );
+        assert_eq!(cached.get(), None);
+        assert_eq!(cached.force_recompute(|| async { Ok(0) }).await, Ok(0));
+        assert_eq!(cached.get(), Some(0));
+
+        // Test cached
+        assert_eq!(cached.force_recompute(|| async { Ok(15) }).await, Ok(15));
+        assert_eq!(cached.get(), Some(15));
+        // Error should still invalidate cache
+        // TODO: Is that actually desired?? Consider diff fn name like invalidate_and_etc?
+        assert_eq!(
+            cached.force_recompute(|| async { Err(()) }).await,
+            Err(Error::Computation(()))
+        );
+        assert_eq!(cached.get(), None);
+
+        // Test inflight
+        let (_notify, handle) = setup_inflight_request(Cached::clone(&cached), Ok(0)).await;
+
+        assert_eq!(cached.force_recompute(|| async { Ok(21) }).await, Ok(21));
+        assert!(matches!(handle.await.unwrap(), Err(Error::Aborted(_))));
+        assert_eq!(cached.get(), Some(21));
+    }
+
+    #[tokio::test]
     async fn test_abort() {
         let cached = Cached::<_, ()>::new();
 
@@ -726,10 +760,14 @@ mod test {
     /// # Panics
     ///
     /// This function panics if `cached` is already in an inflight state or a cached value is available at the start. Please don't race that.
-    async fn setup_inflight_request<T: Clone + Send + 'static, E: Clone + Send + 'static>(
+    async fn setup_inflight_request<T, E>(
         cached: Cached<T, E>,
         result: Result<T, E>,
-    ) -> (Arc<Notify>, JoinHandle<Result<T, Error<E>>>) {
+    ) -> (Arc<Notify>, JoinHandle<Result<T, Error<E>>>)
+    where
+        T: Clone + Send + 'static,
+        E: Clone + Send + 'static,
+    {
         assert!(!cached.is_inflight());
         assert!(cached.get().is_none());
 
