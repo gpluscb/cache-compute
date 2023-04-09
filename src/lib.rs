@@ -650,7 +650,7 @@ mod test {
 
     #[tokio::test]
     async fn test_subscribe_or_recompute() {
-        let cached = Cached::<_, ()>::new();
+        let cached = Cached::new();
 
         // Test empty cache
         assert_eq!(
