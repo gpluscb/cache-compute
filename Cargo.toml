@@ -3,6 +3,10 @@ name = "cache-compute"
 version = "0.1.0"
 edition = "2021"
 description = "This crate implements request/async computation coalescing."
+license = "MIT"
+repository = "https://github.com/gpluscb/cache-compute/"
+keywords = ["cache", "caching", "coalescing", "coalesce"]
+categories = ["asynchronous", "caching", "web-programming"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
