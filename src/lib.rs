@@ -704,6 +704,7 @@ mod test {
 
     /// After this function, `cached` will have an active inflight computation.
     /// The computation will finish with `result` once the `notify_waiters` is called on the returned [`Notify`].
+    /// The computation can be joined with the returned `JoinHandle`.
     ///
     /// # Panics
     ///
