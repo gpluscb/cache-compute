@@ -431,7 +431,6 @@ where
         let aborted = inner.abort();
         let prev_cache = inner.invalidate();
 
-        // TODO: This can be more elegant now too
         let prev_state = match (aborted, prev_cache) {
             (false, None) => CachedState::EmptyCache,
             (false, Some(val)) => CachedState::ValueCached(val),
