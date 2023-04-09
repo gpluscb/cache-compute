@@ -258,7 +258,8 @@ where
     E: Clone,
 {
     /// This function will
-    /// - Execute `computation` and the [`Future`] it returns if there is no cached value and no inflight computation is happening
+    /// - Execute `computation` and the [`Future`] it returns if there is no cached value and no inflight computation is happening,
+    /// starting a new inflight computation and returning the result of that
     /// - Not do anything with `computation` and return the cached value immediately if there is a cached value available
     /// - Not do anything with `computation` and subscribe to an inflight computation if there is one happening and return the result of that when it concludes
     ///
@@ -274,9 +275,12 @@ where
     /// If this function does not start a computation, but subscribes to a computation which panics or gets dropped/cancelled,
     /// it will return an [`Error::Broadcast`].
     ///
+    /// If this function starts a computation or subscribes to a computation that gets aborted with [`Cached::abort`],
+    /// it will return an [`Error::Aborted`].
+    ///
     /// # Panics
     ///
-    /// This function panics if `computation` panics, or if the [`Future`] returned by `computation` panics.
+    /// This function panics if `computation` gets executed and panics, or if the [`Future`] returned by `computation` panics.
     #[allow(clippy::await_holding_lock)] // Clippy you're literally wrong we're moving it before the await
     pub async fn get_or_compute<Fut>(
         &self,
@@ -294,7 +298,21 @@ where
         self.compute_with_lock(computation, inner).await.unwrap()
     }
 
-    // TODO: Docs
+    /// This function will
+    /// - Return immediately with the cached value if a cached value is present
+    /// - Return `None` immediately if no cached value is present and no inflight computation is happening
+    /// - Subscribe to an inflight computation if there is one happening and return the result of that when it concludes
+    ///
+    /// # Errors
+    ///
+    /// If the inflight computation this function subscribed to returns an error,
+    /// that error is cloned and returned by this function in an [`Error::Computation`].
+    ///
+    /// If this function subscribes to a computation which panics or gets dropped/cancelled,
+    /// it will return an [`Error::Broadcast`].
+    ///
+    /// If this function subscribes to a computation that gets aborted with [`Cached::abort`],
+    /// it will return an [`Error::Aborted`].
     pub async fn get_or_subscribe(&self) -> Option<Result<T, Error<E>>> {
         if let GetOrSubscribeResult::Success(res) = self.get_or_subscribe_keep_lock().await {
             Some(res)
@@ -303,7 +321,29 @@ where
         }
     }
 
-    // TODO: Docs
+    /// This function will
+    /// - Invalidate the cache and execute `computation` and the [`Future`] it returns if no inflight computation is happening,
+    /// starting a new inflight computation and returning the result of that
+    /// - Subscribe to an inflight computation if there is one happening and return the result of that when it concludes
+    ///
+    /// Note that after calling this function, the cache will *always* be empty, even if the computation results in an error.
+    ///
+    /// This function will return the previously cached value as well as the result of the computation it starts or subscribes to.
+    ///
+    /// # Errors
+    ///
+    /// If the inflight computation this function starts or subscribes to returns an error,
+    /// that error is cloned and returned by this function in an [`Error::Computation`].
+    ///
+    /// If this function subscribes to a computation which panics or gets dropped/cancelled,
+    /// it will return an [`Error::Broadcast`].
+    ///
+    /// If this function subscribes to or starts a computation that gets aborted with [`Cached::abort`],
+    /// it will return an [`Error::Aborted`].
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `computation` gets executed and panics, or if the [`Future`] returned by `computation` panics.
     #[allow(clippy::await_holding_lock)] // Clippy you're literally wrong we're dropping/moving it before the await
     pub async fn subscribe_or_recompute<Fut>(
         &self,
@@ -335,7 +375,24 @@ where
         }
     }
 
-    // TODO: Docs
+    /// This function will invalidate the cache, potentially abort the inflight request if one is happening, and start a new inflight computation, returning the result of that.
+    ///
+    /// It will return the previous [`CachedState`] as well as the result of the computation it starts.
+    ///
+    /// # Errors
+    ///
+    /// If the inflight computation this function starts returns an error,
+    /// that error is cloned and returned by this function in an [`Error::Computation`].
+    ///
+    /// If this function starts a computation which panics or gets dropped/cancelled,
+    /// it will return an [`Error::Broadcast`].
+    ///
+    /// If this function starts a computation that gets aborted with [`Cached::abort`],
+    /// it will return an [`Error::Aborted`].
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `computation` or the [`Future`] returned by `computation` panics.
     #[allow(clippy::await_holding_lock)] // Clippy you're literally wrong we're moving it before the await
     pub async fn force_recompute<Fut>(
         &self,
