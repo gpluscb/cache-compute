@@ -27,6 +27,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::sync::{Arc, Weak};
 
+use futures::stream::{AbortHandle, Abortable, Aborted};
 use parking_lot::{Mutex, MutexGuard};
 use thiserror::Error;
 use tokio::sync::broadcast::error::RecvError;
@@ -36,7 +37,7 @@ use tokio::sync::broadcast::{self, Receiver};
 /// The error type for [`Cached`].
 ///
 /// `E` specifies the error the computation may return.
-#[derive(Debug, PartialEq, Error)]
+#[derive(Debug, PartialEq, Error, Clone)]
 pub enum Error<E> {
     /// Notifying the other waiters failed with a [`RecvError`].
     /// Either the inflight computation panicked or the [`Future`] returned by get_or_compute was dropped/canceled.
@@ -45,6 +46,9 @@ pub enum Error<E> {
     /// The inflight computation returned an Error value.
     #[error("Inflight computation returned error value: {0}")]
     Computation(E),
+    /// The inflight computation was aborted
+    #[error("Inflight computation was aborted")]
+    Aborted(#[from] Aborted),
 }
 
 /// The main struct implementing the async computation coalescing.
@@ -87,7 +91,7 @@ impl<T, E> Clone for Cached<T, E> {
 #[derive(Clone, Debug, Default)]
 struct CachedInner<T, E> {
     cached: Option<T>,
-    inflight: Weak<Sender<Result<T, E>>>,
+    inflight: Weak<(AbortHandle, Sender<Result<T, Error<E>>>)>,
 }
 
 impl<T, E> CachedInner<T, E> {
@@ -119,7 +123,17 @@ impl<T, E> CachedInner<T, E> {
         self.inflight
             .upgrade()
             // Add one for the sender task
-            .map_or(0, |tx| tx.receiver_count() + 1)
+            .map_or(0, |arc| arc.1.receiver_count() + 1)
+    }
+
+    // TODO: Actually abort (futures::future::Abortable?)
+    fn abort(&mut self) -> bool {
+        if let Some(arc) = self.inflight.upgrade() {
+            arc.0.abort();
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -129,8 +143,8 @@ impl<T: Clone, E> CachedInner<T, E> {
         self.cached.as_ref().cloned()
     }
 
-    fn get_receiver(&self) -> Option<Receiver<Result<T, E>>> {
-        self.inflight.upgrade().map(|tx| tx.subscribe())
+    fn get_receiver(&self) -> Option<Receiver<Result<T, Error<E>>>> {
+        self.inflight.upgrade().map(|arc| arc.1.subscribe())
     }
 }
 
@@ -168,6 +182,12 @@ impl<T, E> Cached<T, E> {
     pub fn inflight_waiting_count(&self) -> usize {
         self.inner.lock().inflight_waiting_count()
     }
+
+    // TODO: docs, tests
+    #[allow(clippy::must_use_candidate)]
+    pub fn abort(&self) -> bool {
+        self.inner.lock().abort()
+    }
 }
 
 impl<T: Clone, E> Cached<T, E> {
@@ -178,7 +198,7 @@ impl<T: Clone, E> Cached<T, E> {
     }
 }
 
-// TODO: Cancel, force recomputation without race conditions (impl some stuff on inner to keep lock?)
+// TODO: Force recomputation without race conditions
 
 enum GetOrSubscribeResult<'a, T, E> {
     Success(Result<T, Error<E>>),
@@ -255,7 +275,7 @@ where
                 None,
                 match receiver.recv().await {
                     Err(why) => Err(Error::from(why)),
-                    Ok(res) => res.map_err(Error::Computation),
+                    Ok(res) => res,
                 },
             )
         } else {
@@ -290,7 +310,7 @@ where
 
         GetOrSubscribeResult::Success(match result {
             Err(why) => Err(Error::from(why)),
-            Ok(res) => res.map_err(Error::Computation),
+            Ok(res) => res,
         })
     }
 
@@ -312,16 +332,24 @@ where
         // Neither cached nor inflight, so compute
         // Underscore binding drops immediately, which is important for the receiver count
         let (tx, _) = broadcast::channel(1);
-        let tx = Arc::new(tx);
+
+        let (abort_handle, abort_registration) = AbortHandle::new_pair();
+
+        let arc = Arc::new((abort_handle, tx));
 
         // In case we panic or get aborted, have way for receivers to notice (via the Weak getting dropped)
-        inner.inflight = Arc::downgrade(&tx);
+        inner.inflight = Arc::downgrade(&arc);
 
         // Release lock so we can do async computation
         drop(inner);
 
         // Run the computation
-        let res = computation().await;
+        let future = computation();
+
+        let res = match Abortable::new(future, abort_registration).await {
+            Ok(res) => res.map_err(Error::Computation),
+            Err(aborted) => Err(Error::from(aborted)),
+        };
 
         {
             // Only sync code in this block
@@ -334,9 +362,9 @@ where
         }
 
         // There might not be receivers in valid circumstances, which would return an error, so we can ignore the result
-        tx.send(res.clone()).ok();
+        arc.1.send(res.clone()).ok();
 
-        Some(res.map_err(Error::Computation))
+        Some(res)
     }
 }
 

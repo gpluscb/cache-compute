@@ -9,4 +9,5 @@ description = "This crate implements request/async computation coalescing."
 [dependencies]
 thiserror = "1.0"
 tokio = { version = "1.27", features = ["macros", "test-util"] }
+futures = { version = "0.3", default-features = false, features = ["std"] }
 parking_lot = { version = "0.12", features = ["send_guard"] }
