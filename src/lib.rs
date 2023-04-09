@@ -460,11 +460,13 @@ mod test {
         let cached = Cached::<_, ()>::new_with_value(12);
         assert_eq!(cached.get(), Some(12));
         assert!(!cached.is_inflight());
+        assert!(cached.is_value_cached());
         assert_eq!(cached.inflight_waiting_count(), 0);
 
         let cached = Cached::new();
         assert_eq!(cached.get(), None);
         assert!(!cached.is_inflight());
+        assert!(!cached.is_value_cached());
         assert_eq!(cached.inflight_waiting_count(), 0);
 
         assert_eq!(cached.get_or_compute(|| async { Ok(12) }).await, Ok(12));
@@ -839,7 +841,7 @@ mod test {
         E: Clone + Send + 'static,
     {
         assert!(!cached.is_inflight());
-        assert!(cached.get().is_none());
+        assert!(!cached.is_value_cached());
 
         let tokio_notify = Arc::new(Notify::new());
         let registered = Arc::new(Notify::new());
