@@ -122,70 +122,93 @@ impl<T: Clone> CachedState<T> {
 
 type InflightComputation<T, E> = Weak<(AbortHandle, Sender<Result<T, Error<E>>>)>;
 
-// TODO: technically this still allows for a cached value being present *and* an inflight computation happening. Use custom enum instead?
-#[derive(Clone, Debug, Default)]
-struct CachedInner<T, E> {
-    cached: Option<T>,
-    inflight: InflightComputation<T, E>,
+// TODO: helper fns like weak() -> InflightComputation etc?
+#[derive(Clone, Debug)]
+enum CachedInner<T, E> {
+    CachedValue(T),
+    EmptyOrInflight(InflightComputation<T, E>),
+}
+
+impl<T, E> Default for CachedInner<T, E> {
+    fn default() -> Self {
+        CachedInner::new()
+    }
 }
 
 impl<T, E> CachedInner<T, E> {
     #[must_use]
     fn new() -> Self {
-        CachedInner {
-            cached: None,
-            inflight: Weak::new(),
-        }
+        CachedInner::EmptyOrInflight(Weak::new())
     }
 
     #[must_use]
     fn new_with_value(value: T) -> Self {
-        CachedInner {
-            cached: Some(value),
-            inflight: Weak::new(),
-        }
+        CachedInner::CachedValue(value)
     }
 
     fn invalidate(&mut self) -> Option<T> {
-        self.cached.take()
+        if self.is_inflight() {
+            None
+        } else if let CachedInner::CachedValue(value) = std::mem::take(self) {
+            Some(value)
+        } else {
+            None
+        }
     }
 
     fn is_inflight(&self) -> bool {
-        self.inflight.upgrade().is_some()
-    }
-
-    fn inflight_waiting_count(&self) -> usize {
-        self.inflight
-            .upgrade()
-            // Add one for the sender task
-            .map_or(0, |arc| arc.1.receiver_count() + 1)
-    }
-
-    fn abort(&mut self) -> bool {
-        if let Some(arc) = self.inflight.upgrade() {
-            arc.0.abort();
-            // Immediately enter no inflight state
-            self.inflight = Weak::new();
-            true
+        if let CachedInner::EmptyOrInflight(weak) = self {
+            weak.upgrade().is_some()
         } else {
             false
         }
     }
 
+    fn inflight_waiting_count(&self) -> usize {
+        if let CachedInner::EmptyOrInflight(weak) = self {
+            // Add one for the sender task
+            weak.upgrade().map_or(0, |arc| arc.1.receiver_count() + 1)
+        } else {
+            0
+        }
+    }
+
+    fn abort(&mut self) -> bool {
+        if let CachedInner::EmptyOrInflight(weak) = self {
+            if let Some(arc) = weak.upgrade() {
+                arc.0.abort();
+
+                // Immediately enter no inflight state
+                *self = CachedInner::new();
+
+                return true;
+            }
+        }
+
+        false
+    }
+
     #[must_use]
     fn is_value_cached(&self) -> bool {
-        self.cached.is_some()
+        matches!(self, CachedInner::CachedValue(_))
     }
 }
 
 impl<T: Clone, E> CachedInner<T, E> {
     #[must_use]
     fn get(&self) -> Option<T> {
-        self.cached.as_ref().cloned()
+        match self {
+            CachedInner::CachedValue(value) => Some(value.clone()),
+            CachedInner::EmptyOrInflight(_) => None,
+        }
     }
 
     fn get_receiver(&self) -> Option<Receiver<Result<T, Error<E>>>> {
-        self.inflight.upgrade().map(|arc| arc.1.subscribe())
+        if let CachedInner::EmptyOrInflight(weak) = self {
+            weak.upgrade().map(|arc| arc.1.subscribe())
+        } else {
+            None
+        }
     }
 }
 
@@ -408,6 +431,7 @@ where
         let aborted = inner.abort();
         let prev_cache = inner.invalidate();
 
+        // TODO: This can be more elegant now too
         let prev_state = match (aborted, prev_cache) {
             (false, None) => CachedState::EmptyCache,
             (false, Some(val)) => CachedState::ValueCached(val),
@@ -429,7 +453,7 @@ where
         let inner = self.inner.lock();
 
         // Return cached if available
-        if let Some(value) = &inner.cached {
+        if let CachedInner::CachedValue(value) = &*inner {
             return GetOrSubscribeResult::Success(Ok(value.clone()));
         }
 
@@ -471,7 +495,7 @@ where
         let arc = Arc::new((abort_handle, tx));
 
         // In case we panic or get aborted, have way for receivers to notice (via the Weak getting dropped)
-        inner.inflight = Arc::downgrade(&arc);
+        *inner = CachedInner::EmptyOrInflight(Arc::downgrade(&arc));
 
         // Release lock so we can do async computation
         drop(inner);
@@ -489,16 +513,15 @@ where
             let mut inner = self.inner.lock();
 
             // We are not in inflight state iff we got aborted
-            debug_assert_eq!(
-                inner.inflight.upgrade().is_none(),
-                matches!(res, Err(Error::Aborted(_)))
-            );
-
-            inner.inflight = Weak::new();
+            // FIXME: this is super racey in case of abort
+            // The fix is probably to check for abort -> leave inner absolutely intact
+            debug_assert_eq!(!inner.is_inflight(), matches!(res, Err(Error::Aborted(_))));
 
             if let Ok(value) = &res {
-                inner.cached.replace(value.clone());
-            };
+                *inner = CachedInner::CachedValue(value.clone());
+            } else {
+                *inner = CachedInner::new();
+            }
         }
 
         // There might not be receivers in valid circumstances, which would return an error, so we can ignore the result
