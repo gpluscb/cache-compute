@@ -390,6 +390,7 @@ mod test {
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::Notify;
+    use tokio::task::JoinHandle;
 
     use super::{Cached, Error};
 
@@ -424,30 +425,7 @@ mod test {
 
         assert_eq!(cached.invalidate(), Some(1));
 
-        let tokio_notify = Arc::new(Notify::new());
-        let registered = Arc::new(Notify::new());
-        let registered_fut = registered.notified();
-
-        let handle = {
-            let tokio_notify = Arc::clone(&tokio_notify);
-            let registered = Arc::clone(&registered);
-            let cached = Cached::clone(&cached);
-
-            // Note: This also tests for get_or_compute returning a Future that is Send
-            tokio::spawn(async move {
-                cached
-                    .get_or_compute(|| async move {
-                        let notified_fut = tokio_notify.notified();
-                        registered.notify_waiters();
-                        notified_fut.await;
-                        Ok(30)
-                    })
-                    .await
-            })
-        };
-
-        // Wait until the tokio_notify is registered
-        registered_fut.await;
+        let (tokio_notify, handle) = setup_inflight_request(Cached::clone(&cached), Ok(30)).await;
 
         assert_eq!(cached.get(), None);
 
@@ -651,29 +629,7 @@ mod test {
         // Test inflight
         cached.invalidate();
 
-        let tokio_notify = Arc::new(Notify::new());
-        let registered = Arc::new(Notify::new());
-        let registered_fut = registered.notified();
-
-        let handle = {
-            let tokio_notify = Arc::clone(&tokio_notify);
-            let registered = Arc::clone(&registered);
-            let cached = Cached::clone(&cached);
-
-            tokio::spawn(async move {
-                cached
-                    .get_or_compute(|| async move {
-                        let notified_fut = tokio_notify.notified();
-                        registered.notify_waiters();
-                        notified_fut.await;
-                        Ok(30)
-                    })
-                    .await
-            })
-        };
-
-        // Wait until the tokio_notify is registered
-        registered_fut.await;
+        let (tokio_notify, handle) = setup_inflight_request(Cached::clone(&cached), Ok(30)).await;
 
         // We know we're inflight right now
         assert!(cached.is_inflight());
@@ -690,5 +646,45 @@ mod test {
         assert_eq!(handle.await.unwrap(), Ok(30));
         assert_eq!(get_or_subscribe_handle.await.unwrap(), Some(Ok(30)));
         assert_eq!(cached.get(), Some(30));
+    }
+
+    /// After this function, `cached` will have an active inflight computation.
+    /// The computation will finish with `result` once the `notify_waiters` is called on the returned [`Notify`].
+    ///
+    /// # Panics
+    ///
+    /// This function panics if `cached` is already in an inflight state or a cached value is available at the start. Please don't race that.
+    async fn setup_inflight_request<T: Clone + Send + 'static, E: Clone + Send + 'static>(
+        cached: Cached<T, E>,
+        result: Result<T, E>,
+    ) -> (Arc<Notify>, JoinHandle<Result<T, Error<E>>>) {
+        assert!(!cached.is_inflight());
+        assert!(cached.get().is_none());
+
+        let tokio_notify = Arc::new(Notify::new());
+        let registered = Arc::new(Notify::new());
+        let registered_fut = registered.notified();
+
+        let handle = {
+            let tokio_notify = Arc::clone(&tokio_notify);
+            let registered = Arc::clone(&registered);
+            let cached = Cached::clone(&cached);
+
+            tokio::spawn(async move {
+                cached
+                    .get_or_compute(|| async move {
+                        let notified_fut = tokio_notify.notified();
+                        registered.notify_waiters();
+                        notified_fut.await;
+                        result
+                    })
+                    .await
+            })
+        };
+
+        // Wait until the tokio_notify is registered
+        registered_fut.await;
+
+        (tokio_notify, handle)
     }
 }
