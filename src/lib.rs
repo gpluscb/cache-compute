@@ -98,6 +98,7 @@ pub enum CachedState<T> {
 
 impl<T> CachedState<T> {
     // TODO: Docs
+    #[must_use]
     pub fn is_inflight(&self) -> bool {
         matches!(self, CachedState::Inflight)
     }
