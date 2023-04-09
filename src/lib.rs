@@ -355,7 +355,7 @@ mod test {
         assert!(!cached.is_inflight());
         assert_eq!(cached.inflight_waiting_count(), 0);
 
-        let cached = Arc::new(Cached::new());
+        let cached = Cached::new();
         assert_eq!(cached.get(), None);
         assert!(!cached.is_inflight());
         assert_eq!(cached.inflight_waiting_count(), 0);
@@ -385,7 +385,7 @@ mod test {
         let handle = {
             let tokio_notify = Arc::clone(&tokio_notify);
             let registered = Arc::clone(&registered);
-            let cached = Arc::clone(&cached);
+            let cached = Cached::clone(&cached);
 
             // Note: This also tests for get_or_compute returning a Future that is Send
             tokio::spawn(async move {
@@ -410,7 +410,7 @@ mod test {
         assert_eq!(cached.inflight_waiting_count(), 1);
 
         let other_handle = {
-            let cached = Arc::clone(&cached);
+            let cached = Cached::clone(&cached);
 
             tokio::spawn(async move { cached.get_or_compute(|| async move { Ok(24) }).await })
         };
@@ -424,11 +424,11 @@ mod test {
 
     #[tokio::test]
     async fn test_computation_panic() {
-        let cached = Arc::new(Cached::<_, ()>::new());
+        let cached = Cached::<_, ()>::new();
 
         // Panic during computation of Future
         let is_panic = {
-            let cached = Arc::clone(&cached);
+            let cached = Cached::clone(&cached);
 
             tokio::spawn(async move {
                 cached
@@ -461,7 +461,7 @@ mod test {
         assert_eq!(cached.invalidate(), Some(21));
 
         let is_panic = {
-            let cached = Arc::clone(&cached);
+            let cached = Cached::clone(&cached);
 
             tokio::spawn(async move {
                 cached
@@ -492,7 +492,7 @@ mod test {
         let registered_fut = registered.notified();
 
         let panicking_handle = {
-            let cached = Arc::clone(&cached);
+            let cached = Cached::clone(&cached);
             let tokio_notify = Arc::clone(&tokio_notify);
             let registered = Arc::clone(&registered);
 
@@ -512,7 +512,7 @@ mod test {
         registered_fut.await;
 
         let waiting_handle = {
-            let cached = Arc::clone(&cached);
+            let cached = Cached::clone(&cached);
 
             tokio::spawn(async move {
                 cached
@@ -538,14 +538,14 @@ mod test {
 
     #[tokio::test]
     async fn test_computation_drop() {
-        let cached = Arc::new(Cached::<_, ()>::new());
+        let cached = Cached::<_, ()>::new();
 
         // Drop the Future while others are waiting for inflight
         let computing = Arc::new(Notify::new());
         let computing_fut = computing.notified();
 
         let dropping_handle = {
-            let cached = Arc::clone(&cached);
+            let cached = Cached::clone(&cached);
             let computing = Arc::clone(&computing);
 
             tokio::spawn(async move {
@@ -564,7 +564,7 @@ mod test {
         computing_fut.await;
 
         let waiting_handle = {
-            let cached = Arc::clone(&cached);
+            let cached = Cached::clone(&cached);
 
             tokio::spawn(async move {
                 cached
