@@ -129,6 +129,8 @@ impl<T, E> CachedInner<T, E> {
     fn abort(&mut self) -> bool {
         if let Some(arc) = self.inflight.upgrade() {
             arc.0.abort();
+            // Immediately enter no inflight state
+            self.inflight = Weak::new();
             true
         } else {
             false
@@ -372,6 +374,13 @@ where
         {
             // Only sync code in this block
             let mut inner = self.inner.lock();
+
+            // We are not in inflight state iff we got aborted
+            debug_assert_eq!(
+                inner.inflight.upgrade().is_none(),
+                matches!(res, Err(Error::Aborted(_)))
+            );
+
             inner.inflight = Weak::new();
 
             if let Ok(value) = &res {
