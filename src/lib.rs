@@ -798,7 +798,6 @@ mod test {
         assert_eq!(cached.get(), Some(30));
 
         // Error should still invalidate cache
-        // TODO: Is that actually desired?? Consider diff fn name like invalidate_and_etc?
         assert_eq!(
             cached.subscribe_or_recompute(|| async { Err(()) }).await,
             (Some(30), Err(Error::Computation(()))),
@@ -850,7 +849,6 @@ mod test {
         );
         assert_eq!(cached.get(), Some(15));
         // Error should still invalidate cache
-        // TODO: Is that actually desired?? Consider diff fn name like invalidate_and_etc?
         assert_eq!(
             cached.force_recompute(async { Err(()) }).await,
             (CachedState::ValueCached(15), Err(Error::Computation(()))),
