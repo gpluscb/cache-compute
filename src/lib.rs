@@ -508,14 +508,15 @@ where
             Err(aborted) => Err(Error::from(aborted)),
         };
 
-        {
+        'do_not_mutate: {
             // Only sync code in this block
             let mut inner = self.inner.lock();
 
-            // We are not in inflight state iff we got aborted
-            // FIXME: this is super racey in case of abort
-            // The fix is probably to check for abort -> leave inner absolutely intact
-            debug_assert_eq!(!inner.is_inflight(), matches!(res, Err(Error::Aborted(_))));
+            if matches!(res, Err(Error::Aborted(_))) {
+                // If we aborted, we have to leave inner as is
+                // Otherwise big races come up as the next inflight computation might already be underway at this point
+                break 'do_not_mutate;
+            }
 
             if let Ok(value) = &res {
                 *inner = CachedInner::CachedValue(value.clone());
