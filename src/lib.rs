@@ -423,7 +423,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_cached_panic_computation() {
+    async fn test_computation_panic() {
         let cached = Arc::new(Cached::<_, ()>::new());
 
         // Panic during computation of Future
@@ -534,6 +534,11 @@ mod test {
         assert!(panicking_handle.await.unwrap_err().is_panic());
         assert!(matches!(waiting_handle.await, Ok(Err(Error::Broadcast(_)))));
         assert_eq!(cached.get(), None);
+    }
+
+    #[tokio::test]
+    async fn test_computation_drop() {
+        let cached = Arc::new(Cached::<_, ()>::new());
 
         // Drop the Future while others are waiting for inflight
         let computing = Arc::new(Notify::new());
