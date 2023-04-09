@@ -287,7 +287,7 @@ where
         }
     }
 
-    // TODO: Docs, tests
+    // TODO: Docs
     // TODO: Potentially return prev cached and whether we aborted?
     #[allow(clippy::await_holding_lock)] // Clippy you're literally wrong we're moving it before the await
     pub async fn force_recompute<Fut>(
