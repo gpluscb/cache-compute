@@ -410,6 +410,7 @@ mod test {
 
         assert_eq!(cached.invalidate(), Some(12));
         assert_eq!(cached.get(), None);
+        assert_eq!(cached.invalidate(), None);
 
         assert_eq!(
             cached.get_or_compute(|| async { Err(42) }).await,
