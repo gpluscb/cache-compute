@@ -115,7 +115,7 @@ impl<T, E> CachedInner<T, E> {
         self.inflight.upgrade().is_some()
     }
 
-    fn inflight_waiting_cout(&self) -> usize {
+    fn inflight_waiting_count(&self) -> usize {
         self.inflight
             .upgrade()
             // Add one for the sender task
@@ -165,8 +165,8 @@ impl<T, E> Cached<T, E> {
 
     /// Returns the amount of instances waiting on an inflight computation, including the instance that started the computation.
     #[must_use]
-    pub fn inflight_waiting_cout(&self) -> usize {
-        self.inner.lock().inflight_waiting_cout()
+    pub fn inflight_waiting_count(&self) -> usize {
+        self.inner.lock().inflight_waiting_count()
     }
 }
 
@@ -353,12 +353,12 @@ mod test {
         let cached = Cached::<_, ()>::new_with_value(12);
         assert_eq!(cached.get(), Some(12));
         assert!(!cached.is_inflight());
-        assert_eq!(cached.inflight_waiting_cout(), 0);
+        assert_eq!(cached.inflight_waiting_count(), 0);
 
         let cached = Arc::new(Cached::new());
         assert_eq!(cached.get(), None);
         assert!(!cached.is_inflight());
-        assert_eq!(cached.inflight_waiting_cout(), 0);
+        assert_eq!(cached.inflight_waiting_count(), 0);
 
         assert_eq!(cached.get_or_compute(|| async { Ok(12) }).await, Ok(12));
         assert_eq!(cached.get(), Some(12));
@@ -407,7 +407,7 @@ mod test {
 
         // We also know we're inflight right now
         assert!(cached.is_inflight());
-        assert_eq!(cached.inflight_waiting_cout(), 1);
+        assert_eq!(cached.inflight_waiting_count(), 1);
 
         let other_handle = {
             let cached = Arc::clone(&cached);
@@ -450,7 +450,7 @@ mod test {
 
         assert_eq!(cached.get(), None);
         assert!(!cached.is_inflight());
-        assert_eq!(cached.inflight_waiting_cout(), 0);
+        assert_eq!(cached.inflight_waiting_count(), 0);
 
         assert_eq!(
             cached.get_or_compute(|| async move { Ok(21) }).await,
@@ -477,7 +477,7 @@ mod test {
 
         assert_eq!(cached.get(), None);
         assert!(!cached.is_inflight());
-        assert_eq!(cached.inflight_waiting_cout(), 0);
+        assert_eq!(cached.inflight_waiting_count(), 0);
 
         assert_eq!(
             cached.get_or_compute(|| async move { Ok(17) }).await,
@@ -524,7 +524,7 @@ mod test {
         };
 
         // Wait a bit for the waiting task to actually wait on rx
-        while cached.inflight_waiting_cout() < 2 {
+        while cached.inflight_waiting_count() < 2 {
             tokio::task::yield_now().await;
         }
 
@@ -571,7 +571,7 @@ mod test {
         };
 
         // Wait a bit for the waiting task to actually wait on rx
-        while cached.inflight_waiting_cout() < 2 {
+        while cached.inflight_waiting_count() < 2 {
             tokio::task::yield_now().await;
         }
 
