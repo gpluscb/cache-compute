@@ -10,7 +10,7 @@ Instead, we will subscribe to that computation and work with the result of it as
 
 # Example
 
-```
+```rs
 use cache_compute::Cached;
 
 pub async fn get_answer(cached_answer: Cached<u32, ()>) -> u32 {
