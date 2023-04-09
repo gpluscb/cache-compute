@@ -120,13 +120,12 @@ impl<T: Clone> CachedState<T> {
     }
 }
 
-type InflightComputation<T, E> = Weak<(AbortHandle, Sender<Result<T, Error<E>>>)>;
+type InflightComputation<T, E> = (AbortHandle, Sender<Result<T, Error<E>>>);
 
-// TODO: helper fns like weak() -> InflightComputation etc?
 #[derive(Clone, Debug)]
 enum CachedInner<T, E> {
     CachedValue(T),
-    EmptyOrInflight(InflightComputation<T, E>),
+    EmptyOrInflight(Weak<InflightComputation<T, E>>),
 }
 
 impl<T, E> Default for CachedInner<T, E> {
@@ -157,40 +156,42 @@ impl<T, E> CachedInner<T, E> {
     }
 
     fn is_inflight(&self) -> bool {
-        if let CachedInner::EmptyOrInflight(weak) = self {
-            weak.upgrade().is_some()
+        self.inflight_arc().is_some()
+    }
+
+    fn inflight_waiting_count(&self) -> usize {
+        self.inflight_arc()
+            .map_or(0, |arc| arc.1.receiver_count() + 1)
+    }
+
+    fn abort(&mut self) -> bool {
+        if let Some(arc) = self.inflight_arc() {
+            arc.0.abort();
+
+            // Immediately enter no inflight state
+            *self = CachedInner::new();
+
+            true
         } else {
             false
         }
     }
 
-    fn inflight_waiting_count(&self) -> usize {
-        if let CachedInner::EmptyOrInflight(weak) = self {
-            // Add one for the sender task
-            weak.upgrade().map_or(0, |arc| arc.1.receiver_count() + 1)
-        } else {
-            0
-        }
-    }
-
-    fn abort(&mut self) -> bool {
-        if let CachedInner::EmptyOrInflight(weak) = self {
-            if let Some(arc) = weak.upgrade() {
-                arc.0.abort();
-
-                // Immediately enter no inflight state
-                *self = CachedInner::new();
-
-                return true;
-            }
-        }
-
-        false
-    }
-
     #[must_use]
     fn is_value_cached(&self) -> bool {
         matches!(self, CachedInner::CachedValue(_))
+    }
+
+    fn inflight_weak(&self) -> Option<&Weak<InflightComputation<T, E>>> {
+        if let CachedInner::EmptyOrInflight(weak) = self {
+            Some(weak)
+        } else {
+            None
+        }
+    }
+
+    fn inflight_arc(&self) -> Option<Arc<InflightComputation<T, E>>> {
+        self.inflight_weak().and_then(Weak::upgrade)
     }
 }
 
@@ -204,11 +205,7 @@ impl<T: Clone, E> CachedInner<T, E> {
     }
 
     fn get_receiver(&self) -> Option<Receiver<Result<T, Error<E>>>> {
-        if let CachedInner::EmptyOrInflight(weak) = self {
-            weak.upgrade().map(|arc| arc.1.subscribe())
-        } else {
-            None
-        }
+        self.inflight_arc().map(|arc| arc.1.subscribe())
     }
 }
 
