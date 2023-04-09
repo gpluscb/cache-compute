@@ -118,11 +118,13 @@ impl<T: Clone> CachedState<T> {
     }
 }
 
+type InflightComputation<T, E> = Weak<(AbortHandle, Sender<Result<T, Error<E>>>)>;
+
 // TODO: technically this still allows for a cached value being present *and* an inflight computation happening. Use custom enum instead?
 #[derive(Clone, Debug, Default)]
 struct CachedInner<T, E> {
     cached: Option<T>,
-    inflight: Weak<(AbortHandle, Sender<Result<T, Error<E>>>)>,
+    inflight: InflightComputation<T, E>,
 }
 
 impl<T, E> CachedInner<T, E> {
