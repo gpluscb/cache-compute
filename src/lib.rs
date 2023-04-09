@@ -750,13 +750,14 @@ mod test {
         assert!(!cached.abort());
 
         // Test inflight
+        assert_eq!(cached.get(), None);
         let (_notify, handle) = setup_inflight_request(Cached::clone(&cached), Ok(0)).await;
 
         assert!(cached.abort());
+        assert!(!cached.is_inflight());
 
         assert!(matches!(handle.await.unwrap(), Err(Error::Aborted(_))));
         assert_eq!(cached.get(), None);
-        assert!(!cached.is_inflight());
         assert_eq!(cached.inflight_waiting_count(), 0);
     }
 
