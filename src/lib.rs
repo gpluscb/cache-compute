@@ -245,7 +245,7 @@ where
         self.compute_with_lock(computation, inner).await.unwrap()
     }
 
-    // TODO: Docs, tests
+    // TODO: Docs
     pub async fn get_or_subscribe(&self) -> Option<Result<T, Error<E>>> {
         if let GetOrSubscribeResult::Success(res) = self.get_or_subscribe_keep_lock().await {
             Some(res)
@@ -634,5 +634,60 @@ mod test {
         // Make sure cached still works as intended
         assert_eq!(cached.get_or_compute(|| async { Ok(3) }).await, Ok(3));
         assert_eq!(cached.get(), Some(3));
+    }
+
+    #[tokio::test]
+    async fn test_get_or_subscribe() {
+        let cached = Cached::<_, ()>::new();
+
+        // Test empty cache
+        assert_eq!(cached.get_or_subscribe().await, None);
+
+        // Test cached
+        assert_eq!(cached.get_or_compute(|| async { Ok(0) }).await, Ok(0));
+        assert_eq!(cached.get_or_subscribe().await, Some(Ok(0)));
+
+        // Test inflight
+        cached.invalidate();
+
+        let tokio_notify = Arc::new(Notify::new());
+        let registered = Arc::new(Notify::new());
+        let registered_fut = registered.notified();
+
+        let handle = {
+            let tokio_notify = Arc::clone(&tokio_notify);
+            let registered = Arc::clone(&registered);
+            let cached = Cached::clone(&cached);
+
+            tokio::spawn(async move {
+                cached
+                    .get_or_compute(|| async move {
+                        let notified_fut = tokio_notify.notified();
+                        registered.notify_waiters();
+                        notified_fut.await;
+                        Ok(30)
+                    })
+                    .await
+            })
+        };
+
+        // Wait until the tokio_notify is registered
+        registered_fut.await;
+
+        // We know we're inflight right now
+        assert!(cached.is_inflight());
+
+        let get_or_subscribe_handle = {
+            let cached = Cached::clone(&cached);
+
+            tokio::spawn(async move { cached.get_or_subscribe().await })
+        };
+
+        // Complete original future, placing 30 in cache
+        tokio_notify.notify_waiters();
+
+        assert_eq!(handle.await.unwrap(), Ok(30));
+        assert_eq!(get_or_subscribe_handle.await.unwrap(), Some(Ok(30)));
+        assert_eq!(cached.get(), Some(30));
     }
 }
