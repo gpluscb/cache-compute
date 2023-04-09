@@ -88,6 +88,32 @@ impl<T, E> Clone for Cached<T, E> {
     }
 }
 
+// TODO: Docs
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CachedState<T> {
+    EmptyCache,
+    ValueCached(T),
+    Inflight,
+}
+
+impl<T> CachedState<T> {
+    pub fn is_inflight(&self) -> bool {
+        matches!(self, CachedState::Inflight)
+    }
+}
+
+impl<T: Clone> CachedState<T> {
+    // TODO: Docs
+    #[must_use]
+    pub fn get(&self) -> Option<T> {
+        match self {
+            CachedState::ValueCached(val) => Some(val.clone()),
+            _ => None,
+        }
+    }
+}
+
+// TODO: technically this still allows for a cached value being present *and* an inflight computation happening. Use custom enum instead?
 #[derive(Clone, Debug, Default)]
 struct CachedInner<T, E> {
     cached: Option<T>,
@@ -293,7 +319,7 @@ where
     pub async fn force_recompute<Fut>(
         &self,
         computation: impl FnOnce() -> Fut,
-    ) -> (Option<Option<T>>, Result<T, Error<E>>)
+    ) -> (CachedState<T>, Result<T, Error<E>>)
     where
         Fut: Future<Output = Result<T, E>>,
     {
@@ -302,11 +328,12 @@ where
         let aborted = inner.abort();
         let prev = inner.invalidate();
 
-        // We aborted implies that there should be nothing in the cache
-        debug_assert!(!aborted || prev.is_none());
-
-        // If we aborted we don't include previous cached (it would be None anyway), otherwise we do
-        let prev_state = (!aborted).then_some(prev);
+        let prev_state = match (aborted, prev) {
+            (false, None) => CachedState::EmptyCache,
+            (false, Some(val)) => CachedState::ValueCached(val),
+            (true, None) => CachedState::Inflight,
+            (true, Some(_)) => unreachable!(),
+        };
 
         // Neither cached nor inflight at this point, so safe to unwrap here
         let result = self.compute_with_lock(computation, inner).await.unwrap();
@@ -407,6 +434,8 @@ mod test {
     use std::time::Duration;
     use tokio::sync::Notify;
     use tokio::task::JoinHandle;
+
+    use crate::CachedState;
 
     use super::{Cached, Error};
 
@@ -725,26 +754,26 @@ mod test {
         // Test empty cache
         assert_eq!(
             cached.force_recompute(|| async { Err(()) }).await,
-            (Some(None), Err(Error::Computation(()))),
+            (CachedState::EmptyCache, Err(Error::Computation(()))),
         );
         assert_eq!(cached.get(), None);
         assert_eq!(
             cached.force_recompute(|| async { Ok(0) }).await,
-            (Some(None), Ok(0))
+            (CachedState::EmptyCache, Ok(0))
         );
         assert_eq!(cached.get(), Some(0));
 
         // Test cached
         assert_eq!(
             cached.force_recompute(|| async { Ok(15) }).await,
-            (Some(Some(0)), Ok(15)),
+            (CachedState::ValueCached(0), Ok(15)),
         );
         assert_eq!(cached.get(), Some(15));
         // Error should still invalidate cache
         // TODO: Is that actually desired?? Consider diff fn name like invalidate_and_etc?
         assert_eq!(
             cached.force_recompute(|| async { Err(()) }).await,
-            (Some(Some(15)), Err(Error::Computation(()))),
+            (CachedState::ValueCached(15), Err(Error::Computation(()))),
         );
         assert_eq!(cached.get(), None);
 
@@ -753,7 +782,7 @@ mod test {
 
         assert_eq!(
             cached.force_recompute(|| async { Ok(21) }).await,
-            (None, Ok(21))
+            (CachedState::Inflight, Ok(21))
         );
         assert!(matches!(handle.await.unwrap(), Err(Error::Aborted(_))));
         assert_eq!(cached.get(), Some(21));
