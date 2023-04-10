@@ -209,6 +209,7 @@ impl<T, E> CachedInner<T, E> {
         matches!(self, CachedInner::CachedValue(_))
     }
 
+    #[must_use]
     fn inflight_weak(&self) -> Option<&Weak<InflightComputation<T, E>>> {
         if let CachedInner::EmptyOrInflight(weak) = self {
             Some(weak)
@@ -217,6 +218,7 @@ impl<T, E> CachedInner<T, E> {
         }
     }
 
+    #[must_use]
     fn inflight_arc(&self) -> Option<Arc<InflightComputation<T, E>>> {
         self.inflight_weak().and_then(Weak::upgrade)
     }
@@ -231,6 +233,7 @@ impl<T: Clone, E> CachedInner<T, E> {
         }
     }
 
+    #[must_use]
     fn get_receiver(&self) -> Option<Receiver<Result<T, Error<E>>>> {
         self.inflight_arc().map(|arc| arc.1.subscribe())
     }
