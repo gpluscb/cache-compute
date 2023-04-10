@@ -59,8 +59,7 @@ use futures::stream::{AbortHandle, Abortable, Aborted};
 use parking_lot::{Mutex, MutexGuard};
 use thiserror::Error;
 use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::broadcast::Sender;
-use tokio::sync::broadcast::{self, Receiver};
+use tokio::sync::broadcast::{self, Receiver, Sender};
 
 // TODO: More sane struct/impl ordering
 
