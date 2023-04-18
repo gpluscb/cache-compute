@@ -140,9 +140,10 @@ impl<T: Clone> CachedState<T> {
     /// Returns the value in the cache immediately if present, cloning the value.
     #[must_use]
     pub fn get(&self) -> Option<T> {
-        match self {
-            CachedState::ValueCached(val) => Some(val.clone()),
-            _ => None,
+        if let CachedState::ValueCached(val) = self {
+            Some(val.clone())
+        } else {
+            None
         }
     }
 }
@@ -227,9 +228,10 @@ impl<T, E> CachedInner<T, E> {
 impl<T: Clone, E> CachedInner<T, E> {
     #[must_use]
     fn get(&self) -> Option<T> {
-        match self {
-            CachedInner::CachedValue(value) => Some(value.clone()),
-            CachedInner::EmptyOrInflight(_) => None,
+        if let CachedInner::CachedValue(value) = self {
+            Some(value.clone())
+        } else {
+            None
         }
     }
 
