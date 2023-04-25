@@ -560,8 +560,16 @@ where
             }
         }
 
-        // There might not be receivers in valid circumstances, which would return an error, so we can ignore the result
-        arc.1.send(res.clone()).ok();
+        // Only clone if we have receivers
+        if arc.1.receiver_count() > 0 {
+            // We have receivers, so we can unwrap safely
+            // unwrap_or_else because unwrap and expect need Debug
+            // There is no race condition here because after line 560, this Arc will be inaccessible
+            // from the struct and no new receivers can subscribe
+            arc.1
+                .send(res.clone())
+                .unwrap_or_else(|_| panic!("No receivers after receiver count was checked"));
+        }
 
         Some(res)
     }
