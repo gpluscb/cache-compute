@@ -134,14 +134,22 @@ impl<T> CachedState<T> {
     pub fn is_inflight(&self) -> bool {
         matches!(self, CachedState::Inflight)
     }
-}
 
-impl<T: Clone> CachedState<T> {
-    /// Returns the value in the cache immediately if present, cloning the value.
+    /// Returns the value in the cache immediately if present.
     #[must_use]
-    pub fn get(&self) -> Option<T> {
+    pub fn get(&self) -> Option<&T> {
         if let CachedState::ValueCached(val) = self {
-            Some(val.clone())
+            Some(val)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the value in the cache immediately if present.
+    #[must_use]
+    pub fn get_mut(&mut self) -> Option<&mut T> {
+        if let CachedState::ValueCached(val) = self {
+            Some(val)
         } else {
             None
         }
@@ -223,13 +231,11 @@ impl<T, E> CachedInner<T, E> {
     fn inflight_arc(&self) -> Option<Arc<InflightComputation<T, E>>> {
         self.inflight_weak().and_then(Weak::upgrade)
     }
-}
 
-impl<T: Clone, E> CachedInner<T, E> {
     #[must_use]
-    fn get(&self) -> Option<T> {
+    fn get(&self) -> Option<&T> {
         if let CachedInner::CachedValue(value) = self {
-            Some(value.clone())
+            Some(value)
         } else {
             None
         }
@@ -297,7 +303,7 @@ impl<T: Clone, E> Cached<T, E> {
     /// Returns the value of the cache immediately if present, cloning the value.
     #[must_use]
     pub fn get(&self) -> Option<T> {
-        self.inner.lock().get()
+        self.inner.lock().get().cloned()
     }
 }
 
