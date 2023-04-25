@@ -568,7 +568,7 @@ where
             // from the struct and no new receivers can subscribe
             arc.1
                 .send(res.clone())
-                .unwrap_or_else(|_| panic!("No receivers after receiver count was checked"));
+                .unwrap_or_else(|_| unreachable!("No receivers after receiver count was checked"));
         }
 
         Some(res)
