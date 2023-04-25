@@ -182,12 +182,12 @@ impl<T, E> CachedInner<T, E> {
     }
 
     fn invalidate(&mut self) -> Option<T> {
-        if self.is_inflight() {
+        if matches!(self, CachedInner::EmptyOrInflight(_)) {
             None
         } else if let CachedInner::CachedValue(value) = std::mem::take(self) {
             Some(value)
         } else {
-            None
+            unreachable!()
         }
     }
 
