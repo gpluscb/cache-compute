@@ -192,7 +192,8 @@ impl<T, E> CachedInner<T, E> {
     }
 
     fn is_inflight(&self) -> bool {
-        self.inflight_arc().is_some()
+        self.inflight_weak()
+            .map_or(false, |weak| weak.strong_count() > 0)
     }
 
     fn inflight_waiting_count(&self) -> usize {
