@@ -561,14 +561,11 @@ where
         }
 
         // Only clone if we have receivers
+        // This is not a race condition because after inner gets assigned above (or if the request has been aborted),
+        // this Arc will be inaccessible from the struct and no new receivers can subscribe
         if arc.1.receiver_count() > 0 {
-            // We have receivers, so we can unwrap safely
-            // unwrap_or_else because unwrap and expect need Debug
-            // There is no race condition here because after line 560, this Arc will be inaccessible
-            // from the struct and no new receivers can subscribe
-            arc.1
-                .send(res.clone())
-                .unwrap_or_else(|_| unreachable!("No receivers after receiver count was checked"));
+            // That being said, others might still *un*subscribe after the if, so we cannot unwrap here
+            arc.1.send(res.clone()).ok();
         }
 
         Some(res)
