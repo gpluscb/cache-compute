@@ -543,20 +543,18 @@ where
             Err(aborted) => Err(Error::from(aborted)),
         };
 
-        'do_not_mutate: {
+        {
             // Only sync code in this block
             let mut inner = self.inner.lock();
 
-            if matches!(res, Err(Error::Aborted(_))) {
+            if !matches!(res, Err(Error::Aborted(_))) {
                 // If we aborted, we have to leave inner as is
                 // Otherwise big races come up as the next inflight computation might already be underway at this point
-                break 'do_not_mutate;
-            }
-
-            if let Ok(value) = &res {
-                *inner = CachedInner::CachedValue(value.clone());
-            } else {
-                *inner = CachedInner::new();
+                if let Ok(value) = &res {
+                    *inner = CachedInner::CachedValue(value.clone());
+                } else {
+                    *inner = CachedInner::new();
+                }
             }
         }
 
