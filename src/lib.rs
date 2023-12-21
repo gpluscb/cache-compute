@@ -101,7 +101,7 @@ pub enum Error<E> {
 /// The instances of `T` and `E` are cloned for every time a user requests a value or gets handed an error `E`.
 /// Thus, consider using an [`Arc`] for expensive to clone variants of `T` and `E`.
 ///
-/// The cached value is stored on the stack, so you may want to consider using a [`Box`] for large `T`.
+/// The internal representation uses *at least* `size_of<T>` bytes regardless of whether a value is cached, so you might want to consider using a [`Box`] for large `T`.
 ///
 /// [`Box`]: std::boxed::Box
 #[derive(Debug, Default)]
